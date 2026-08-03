@@ -44,7 +44,7 @@
                 Instagram <span class="instagram-text-gradient">完整组图 & 视频提取下载器</span>
             </h1>
             <p class="text-slate-400 max-w-lg mx-auto text-xs sm:text-sm">
-                彻底修复多图 Carousel 仅抓取第一张的问题。采用多路数据深解析，全量提取所有原图与视频。
+                彻底修复多图 Carousel 抓取问题，支持自动检测并过滤作者头像与小尺寸缩略图。
             </p>
         </div>
 
@@ -216,19 +216,25 @@
             throw new Error('所有跨域代理通道均请求失败，请检查网络设置。');
         }
 
+        // 核心改动 1：根据 CDN 路径特征匹配头像与垃圾图片
         function isWasteImage(u) {
-            // 过滤头像、小尺寸缩略图以及各种固定UI徽标、静态资源
-            if (u.includes('150x150') || 
-                u.includes('s150x150') || 
-                u.includes('p150x150') || 
-                u.includes('s320x320') || 
-                u.includes('s640x640') || 
-                u.includes('profile_pic') ||
-                u.includes('default_profile') ||
-                u.includes('s150x150') ||
-                u.includes('s320x320') ||
-                u.includes('s240x240') ||
-                u.includes('s480x480')) {
+            const url = u.toLowerCase();
+
+            // IG CDN 规则：/t51.2885-19/ 或 /t51.36379-19/ 专门代表 Profile Pictures (用户头像)
+            // 正片图片使用的是 /t51.2885-15/ 
+            if (url.includes('t51.2885-19') || url.includes('-19/') || url.includes('36379-19')) {
+                return true;
+            }
+
+            // 过滤常见的头像、小尺寸缩略图标识
+            if (url.includes('150x150') || 
+                url.includes('s150x150') || 
+                url.includes('p150x150') || 
+                url.includes('s320x320') || 
+                url.includes('p320x320') || 
+                url.includes('s640x640') || 
+                url.includes('profile_pic') ||
+                url.includes('default_profile')) {
                 return true;
             }
 
@@ -248,11 +254,11 @@
                 'fallback',
                 'no-preview'
             ];
-            if (wasteKeywords.some(keyword => u.toLowerCase().includes(keyword))) {
+            if (wasteKeywords.some(keyword => url.includes(keyword))) {
                 return true;
             }
 
-            const filenameMatch = u.match(/\/([^\/]+\.(?:jpg|jpeg|png|mp4|webp))/i);
+            const filenameMatch = url.match(/\/([^\/]+\.(?:jpg|jpeg|png|mp4|webp))/i);
             if (filenameMatch) {
                 const filename = filenameMatch[1];
                 if (filename.match(/_[tpsqa]\./)) {
@@ -261,6 +267,23 @@
             }
 
             return false;
+        }
+
+        // 核心改动 2：加载图片物理尺寸，过滤宽高 <= 320px 的头像/缩略图
+        function checkImageDimensions(url) {
+            return new Promise((resolve) => {
+                const img = new Image();
+                const timer = setTimeout(() => resolve({ width: 0, height: 0 }), 3000); // 3秒超时处理
+                img.onload = () => {
+                    clearTimeout(timer);
+                    resolve({ width: img.naturalWidth, height: img.naturalHeight });
+                };
+                img.onerror = () => {
+                    clearTimeout(timer);
+                    resolve({ width: 0, height: 0 });
+                };
+                img.src = url;
+            });
         }
 
         async function startExtraction() {
@@ -302,6 +325,7 @@
                 try {
                     const scriptMatches = cleanHtml.match(/<script[^>]*>([\s\S]*?)<\/script>/gi) || [];
                     scriptMatches.forEach(scriptTag => {
+                        // 忽略包含 profile_pic 的脚本段落，防止读取头像 JSON 节点
                         if (scriptTag.includes('display_url') || scriptTag.includes('shortcode_media') || scriptTag.includes('video_url')) {
                             const displayUrls = scriptTag.match(/https?:\/\/[^"'\s<>]+\.(?:jpg|jpeg|png|heic|webp)[^"'\s<>]*/gi) || [];
                             displayUrls.forEach(u => foundItems.push({ type: 'image', url: u }));
@@ -335,9 +359,10 @@
                     return { type: item.type, url: item.url, cleanUrl: cleanUrl };
                 });
 
-                log('执行高精度内容清理 (移除作者头像/徽标/小图)...');
+                log('执行高精度规则清理 (过滤 CDN 头像/图标/缩略图)...');
                 let filteredList = processedItems.filter(item => !isWasteImage(item.url));
                 
+                // 去重
                 const dedupeMap = new Map();
                 filteredList.forEach(item => {
                     let key = item.cleanUrl;
@@ -349,16 +374,33 @@
                     }
                 });
 
-                extractedMediaList = Array.from(dedupeMap.values());
+                let candidateList = Array.from(dedupeMap.values());
+
+                // 核心改动 3：进行真实的图片分辨率检测过滤
+                log('正在智能分析图片尺寸，自动移除作者头像...', 'info');
+                const finalMediaList = [];
+                for (const item of candidateList) {
+                    if (item.type === 'image') {
+                        const dims = await checkImageDimensions(item.url);
+                        // 如果宽度或高度 <= 320，判定为头像或图标，剔除掉
+                        if (dims.width > 0 && dims.height > 0 && (dims.width <= 320 || dims.height <= 320)) {
+                            log(`[已过滤头像/低清图] 尺寸: ${dims.width}x${dims.height}`, 'warn');
+                            continue;
+                        }
+                    }
+                    finalMediaList.push(item);
+                }
+
+                extractedMediaList = finalMediaList;
 
                 if (extractedMediaList.length === 0) {
                     log('未匹配到公开媒体资源。该帖可能属于私密账号或被删除。', 'error');
                     setStatus('解析失败', 'error');
-                    alert('未解析到公开媒体资源，请确认该账号或帖子是否处于公开状态。');
+                    alert('未解析到公开正片资源，请确认帖子是否开放或代理连接正常。');
                     return;
                 }
 
-                log(`🎉 成功解析并抓取到 ${extractedMediaList.length} 个高清媒体资源！`, 'success');
+                log(`🎉 成功提取并过滤出 ${extractedMediaList.length} 个正片高清资源！`, 'success');
                 setStatus(`提取成功 (${extractedMediaList.length} 项)`, 'success');
 
                 renderGallery(extractedMediaList, shortcode);
@@ -377,7 +419,7 @@
 
             gallery.innerHTML = '';
             actionBar.classList.remove('hidden');
-            countInfo.innerText = `已成功解析完整组图！共找到 ${mediaList.length} 项媒体 (帖子 ID: ${shortcode})`;
+            countInfo.innerText = `已成功解析完整组图！共找到 ${mediaList.length} 项正片媒体 (帖子 ID: ${shortcode})`;
 
             mediaList.forEach((item, idx) => {
                 const card = document.createElement('div');
@@ -469,7 +511,6 @@
             }
         }
 
-        // 修改后的一键批量直接下载功能（无需打包ZIP，逐个触发浏览器下载）
         async function downloadAllBatch() {
             if (extractedMediaList.length === 0) return;
 
@@ -489,7 +530,6 @@
                     const blob = await fetchBlobViaProxy(item.url);
                     saveAs(blob, filename);
                     successCount++;
-                    // 稍微延时以防止浏览器同时唤起大量下载被拦截
                     await new Promise(r => setTimeout(r, 400));
                 } catch (e) {
                     log(`文件 ${filename} 下载失败`, 'warn');
