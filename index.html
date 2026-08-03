@@ -17,9 +17,9 @@
       </button>
     </div>
 
-    <!-- 配置面板 -->
+    <!-- 配置面板 (基础配置) -->
     <div id="configPanel" class="bg-gray-50 p-4 rounded-lg border mb-6 hidden">
-      <h2 class="text-sm font-semibold text-gray-700 mb-3">GitHub 配置（配置仅保存于本地浏览器）</h2>
+      <h2 class="text-sm font-semibold text-gray-700 mb-3">GitHub 基础配置（独立存储，防止与其他应用冲突）</h2>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <label class="block text-xs text-gray-600 mb-1">Personal Access Token (PAT) <span class="text-red-500">*</span></label>
@@ -37,11 +37,7 @@
           <label class="block text-xs text-gray-600 mb-1">分支 (Branch)</label>
           <input type="text" id="ghBranch" value="main" class="w-full p-2 text-sm border rounded focus:outline-none focus:ring-1 focus:ring-blue-500">
         </div>
-        <div>
-          <label class="block text-xs text-gray-600 mb-1">存储目录 (例如: images/)</label>
-          <input type="text" id="ghPath" placeholder="images/" class="w-full p-2 text-sm border rounded focus:outline-none focus:ring-1 focus:ring-blue-500">
-        </div>
-        <div>
+        <div class="md:col-span-2">
           <label class="block text-xs text-gray-600 mb-1">默认 CDN 加速域名</label>
           <select id="cdnType" class="w-full p-2 text-sm border rounded focus:outline-none focus:ring-1 focus:ring-blue-500">
             <option value="jsdelivr">jsDelivr CDN (推荐)</option>
@@ -51,12 +47,26 @@
         </div>
       </div>
       <button id="saveConfig" class="mt-4 w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded text-sm font-semibold transition">
-        保存配置
+        保存基础配置
       </button>
     </div>
 
+    <!-- 始终可见的目录配置区 -->
+    <div class="bg-blue-50/50 p-4 rounded-lg border border-blue-100 mb-6 flex flex-col md:flex-row gap-4 items-end">
+      <div class="flex-1 w-full">
+        <label class="block text-sm font-semibold text-gray-800 mb-1">📁 当前存储目录 <span class="text-xs font-normal text-gray-500">(留空则保存在根目录)</span></label>
+        <input type="text" id="ghPath" placeholder="例如: images/posts/ (会自动修正格式)" class="w-full p-2 text-sm border border-blue-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white">
+      </div>
+      <div class="w-full md:w-56">
+        <label class="block text-xs text-gray-600 mb-1">快速选择历史目录</label>
+        <select id="dirHistorySelect" class="w-full p-2 text-sm border border-blue-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white">
+          <option value="">-- 选择历史目录 --</option>
+        </select>
+      </div>
+    </div>
+
     <!-- 上传区域 -->
-    <div id="dropZone" class="border-2 border-dashed border-blue-300 rounded-xl p-8 text-center hover:border-blue-500 transition-colors cursor-pointer bg-blue-50/30 mb-6">
+    <div id="dropZone" class="border-2 border-dashed border-blue-300 rounded-xl p-8 text-center hover:border-blue-500 transition-colors cursor-pointer bg-white mb-6">
       <svg class="mx-auto h-12 w-12 text-blue-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
       </svg>
@@ -101,6 +111,9 @@
   </div>
 
   <script>
+    // 增加专属前缀，保证localStorage唯一性，绝对不跟其他应用冲突
+    const LS_PREFIX = 'github_imgbed_v1_';
+
     // DOM 元素引用
     const toggleConfigBtn = document.getElementById('toggleConfig');
     const configPanel = document.getElementById('configPanel');
@@ -109,36 +122,74 @@
     const fileInput = document.getElementById('fileInput');
     const statusDiv = document.getElementById('status');
     const resultPanel = document.getElementById('resultPanel');
+    
+    // 目录相关 DOM
+    const ghPathInput = document.getElementById('ghPath');
+    const dirHistorySelect = document.getElementById('dirHistorySelect');
 
     // 加载配置
     function loadConfig() {
-      document.getElementById('ghToken').value = localStorage.getItem('gh_token') || '';
-      document.getElementById('ghOwner').value = localStorage.getItem('gh_owner') || '';
-      document.getElementById('ghRepo').value = localStorage.getItem('gh_repo') || '';
-      document.getElementById('ghBranch').value = localStorage.getItem('gh_branch') || 'main';
-      document.getElementById('ghPath').value = localStorage.getItem('gh_path') || 'images/';
-      document.getElementById('cdnType').value = localStorage.getItem('gh_cdn') || 'jsdelivr';
+      document.getElementById('ghToken').value = localStorage.getItem(LS_PREFIX + 'token') || '';
+      document.getElementById('ghOwner').value = localStorage.getItem(LS_PREFIX + 'owner') || '';
+      document.getElementById('ghRepo').value = localStorage.getItem(LS_PREFIX + 'repo') || '';
+      document.getElementById('ghBranch').value = localStorage.getItem(LS_PREFIX + 'branch') || 'main';
+      document.getElementById('cdnType').value = localStorage.getItem(LS_PREFIX + 'cdn') || 'jsdelivr';
+      
+      // 恢复上次使用的目录
+      ghPathInput.value = localStorage.getItem(LS_PREFIX + 'last_path') || '';
 
-      if (!localStorage.getItem('gh_token')) {
+      if (!localStorage.getItem(LS_PREFIX + 'token')) {
         configPanel.classList.remove('hidden');
       }
+
+      loadDirHistory();
     }
 
-    // 保存配置
+    // 渲染历史目录下拉菜单
+    function loadDirHistory() {
+      const history = JSON.parse(localStorage.getItem(LS_PREFIX + 'dir_history') || '[]');
+      dirHistorySelect.innerHTML = '<option value="">-- 选择历史目录 --</option>';
+      history.forEach(dir => {
+        const opt = document.createElement('option');
+        opt.value = dir;
+        opt.textContent = dir === '' ? '(根目录 /)' : dir;
+        dirHistorySelect.appendChild(opt);
+      });
+    }
+
+    // 保存目录到历史记录 (最多保留 10 个)
+    function saveDirToHistory(dir) {
+      let history = JSON.parse(localStorage.getItem(LS_PREFIX + 'dir_history') || '[]');
+      // 去重并放到最前面
+      history = history.filter(d => d !== dir);
+      history.unshift(dir);
+      if (history.length > 10) history.pop();
+      localStorage.setItem(LS_PREFIX + 'dir_history', JSON.stringify(history));
+      localStorage.setItem(LS_PREFIX + 'last_path', dir); // 记录最后一次使用的目录
+      loadDirHistory();
+    }
+
+    // 监听历史目录选择事件
+    dirHistorySelect.addEventListener('change', (e) => {
+      if (e.target.selectedIndex > 0) {
+        ghPathInput.value = e.target.value;
+      }
+    });
+
+    // 实时保存用户手打的目录作为 last_path
+    ghPathInput.addEventListener('input', (e) => {
+      localStorage.setItem(LS_PREFIX + 'last_path', e.target.value.trim());
+    });
+
+    // 保存基础配置
     saveConfigBtn.addEventListener('click', () => {
-      localStorage.setItem('gh_token', document.getElementById('ghToken').value.trim());
-      localStorage.setItem('gh_owner', document.getElementById('ghOwner').value.trim());
-      localStorage.setItem('gh_repo', document.getElementById('ghRepo').value.trim());
-      localStorage.setItem('gh_branch', document.getElementById('ghBranch').value.trim() || 'main');
-      
-      let path = document.getElementById('ghPath').value.trim();
-      if (path && !path.endsWith('/')) path += '/';
-      if (path.startsWith('/')) path = path.slice(1);
-      localStorage.setItem('gh_path', path);
+      localStorage.setItem(LS_PREFIX + 'token', document.getElementById('ghToken').value.trim());
+      localStorage.setItem(LS_PREFIX + 'owner', document.getElementById('ghOwner').value.trim());
+      localStorage.setItem(LS_PREFIX + 'repo', document.getElementById('ghRepo').value.trim());
+      localStorage.setItem(LS_PREFIX + 'branch', document.getElementById('ghBranch').value.trim() || 'main');
+      localStorage.setItem(LS_PREFIX + 'cdn', document.getElementById('cdnType').value);
 
-      localStorage.setItem('gh_cdn', document.getElementById('cdnType').value);
-
-      showStatus('配置保存成功！', 'bg-green-100 text-green-700');
+      showStatus('基础配置保存成功！', 'bg-green-100 text-green-700');
       configPanel.classList.add('hidden');
     });
 
@@ -183,16 +234,27 @@
 
     // 核心逻辑：使用 GitHub REST API 上传图片
     async function uploadImage(file) {
-      const token = localStorage.getItem('gh_token');
-      const owner = localStorage.getItem('gh_owner');
-      const repo = localStorage.getItem('gh_repo');
-      const branch = localStorage.getItem('gh_branch') || 'main';
-      const dirPath = localStorage.getItem('gh_path') || '';
-
+      const token = localStorage.getItem(LS_PREFIX + 'token');
+      const owner = localStorage.getItem(LS_PREFIX + 'owner');
+      const repo = localStorage.getItem(LS_PREFIX + 'repo');
+      const branch = localStorage.getItem(LS_PREFIX + 'branch') || 'main';
+      
       if (!token || !owner || !repo) {
-        showStatus('请先点击右上角【设置配置】填写 GitHub 信息！', 'bg-yellow-100 text-yellow-800');
+        showStatus('请先点击右上角【设置配置】填写 GitHub 基础信息！', 'bg-yellow-100 text-yellow-800');
         configPanel.classList.remove('hidden');
         return;
+      }
+
+      // 规范化处理目录路径
+      let dirPath = ghPathInput.value.trim();
+      if (dirPath && !dirPath.endsWith('/')) dirPath += '/';
+      if (dirPath.startsWith('/')) dirPath = dirPath.slice(1);
+      ghPathInput.value = dirPath; // 将修正后的路径反馈到输入框
+
+      // 【新增】上传前二次确认弹窗
+      const displayPath = dirPath ? dirPath : '【根目录 /】';
+      if (!confirm(`请确认上传信息：\n\n图片仓库：${owner}/${repo}\n保存目录：${displayPath}\n\n确定要上传到此位置吗？`)) {
+        return; // 用户点击取消，中止上传
       }
 
       showStatus('正在上传图片中，请稍候...', 'bg-blue-100 text-blue-700');
@@ -201,7 +263,7 @@
       try {
         // 读取图片文件转 Base64
         const base64Content = await fileToBase64(file);
-        
+
         // 生成唯一文件名 (当前时间戳 + 随机数 + 后缀)
         const ext = file.name.split('.').pop() || 'png';
         const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${ext}`;
@@ -228,8 +290,11 @@
           throw new Error(errData.message || '上传失败');
         }
 
+        // 上传成功后，将该目录存入下拉历史记录
+        saveDirToHistory(dirPath);
+
         // 生成访问链接
-        const cdnType = localStorage.getItem('gh_cdn') || 'jsdelivr';
+        const cdnType = localStorage.getItem(LS_PREFIX + 'cdn') || 'jsdelivr';
         let imgUrl = '';
         if (cdnType === 'jsdelivr') {
           imgUrl = `https://cdn.jsdelivr.net/gh/${owner}/${repo}@${branch}/${fullPath}`;
@@ -245,11 +310,11 @@
         document.getElementById('urlMarkdown').value = `![${fileName}](${imgUrl})`;
         document.getElementById('urlHTML').value = `<img src="${imgUrl}" alt="${fileName}" />`;
 
-        showStatus('上传成功！', 'bg-green-100 text-green-700');
+        showStatus('✅ 上传成功！', 'bg-green-100 text-green-700');
         resultPanel.classList.remove('hidden');
 
       } catch (err) {
-        showStatus(`上传失败: ${err.message}`, 'bg-red-100 text-red-700');
+        showStatus(`❌ 上传失败: ${err.message}`, 'bg-red-100 text-red-700');
       }
     }
 
