@@ -34,7 +34,7 @@
 </head>
 <body class="min-h-screen py-8 px-4 sm:px-6 lg:px-8">
     <div class="max-w-4xl mx-auto space-y-6">
-        
+
         <!-- Header -->
         <div class="text-center space-y-2">
             <div class="inline-flex items-center justify-center w-14 h-14 rounded-2xl instagram-gradient shadow-lg shadow-pink-500/20 mb-1">
@@ -106,10 +106,10 @@
             </div>
             <div class="flex items-center gap-3 w-full sm:w-auto">
                 <button 
-                    onclick="downloadAllZip()" 
+                    onclick="downloadAllBatch()" 
                     class="flex-1 sm:flex-initial bg-pink-600 hover:bg-pink-700 text-white text-xs font-bold px-5 py-2.5 rounded-xl transition shadow flex items-center justify-center gap-2 cursor-pointer"
                 >
-                    <i class="fa-solid fa-file-zipper"></i> 一键打包下载 ZIP 组图
+                    <i class="fa-solid fa-cloud-arrow-down"></i> 一键批量下载全部文件
                 </button>
             </div>
         </div>
@@ -134,7 +134,7 @@
             if (type === 'success') color = 'text-emerald-400';
             if (type === 'warn') color = 'text-yellow-400';
             if (type === 'error') color = 'text-red-400';
-            
+
             const line = document.createElement('div');
             line.className = color;
             line.innerText = `[${time}] ${msg}`;
@@ -147,7 +147,7 @@
             const spinner = document.getElementById('status-spinner');
             const statusText = document.getElementById('status-text');
             if (!badge || !spinner || !statusText) return;
-            
+
             badge.classList.remove('hidden');
             badge.classList.add('flex');
             statusText.innerText = text;
@@ -176,7 +176,6 @@
             return null;
         }
 
-        // 安全的反转义与清理函数，防止正则字符转义错误
         function sanitizeText(raw) {
             if (!raw) return '';
             return raw.split('\\/').join('/')
@@ -187,7 +186,7 @@
 
         async function fetchWithProxy(targetUrl, preferredProxy = 'auto') {
             const proxyGenerators = [];
-            
+
             if (preferredProxy === 'allorigins' || preferredProxy === 'auto') {
                 proxyGenerators.push(url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`);
             }
@@ -215,6 +214,53 @@
                 }
             }
             throw new Error('所有跨域代理通道均请求失败，请检查网络设置。');
+        }
+
+        function isWasteImage(u) {
+            // 过滤头像、小尺寸缩略图以及各种固定UI徽标、静态资源
+            if (u.includes('150x150') || 
+                u.includes('s150x150') || 
+                u.includes('p150x150') || 
+                u.includes('s320x320') || 
+                u.includes('s640x640') || 
+                u.includes('profile_pic') ||
+                u.includes('default_profile') ||
+                u.includes('s150x150') ||
+                u.includes('s320x320') ||
+                u.includes('s240x240') ||
+                u.includes('s480x480')) {
+                return true;
+            }
+
+            const wasteKeywords = [
+                'app_store_badge',
+                'google_play_badge',
+                'badge-microsoft',
+                'badges/microsoft',
+                'badges/appstore',
+                'badges/googleplay',
+                '/icons/',
+                '/static/',
+                '/rsrc.php',
+                '/images/',
+                'placeholder',
+                'transparent_pixel',
+                'fallback',
+                'no-preview'
+            ];
+            if (wasteKeywords.some(keyword => u.toLowerCase().includes(keyword))) {
+                return true;
+            }
+
+            const filenameMatch = u.match(/\/([^\/]+\.(?:jpg|jpeg|png|mp4|webp))/i);
+            if (filenameMatch) {
+                const filename = filenameMatch[1];
+                if (filename.match(/_[tpsqa]\./)) {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         async function startExtraction() {
@@ -253,7 +299,6 @@
                 const cleanHtml = sanitizeText(rawHtml);
                 let foundItems = [];
 
-                // 策略 1: 扫瞄 JSON 标签中的图片与视频 URL 列表
                 try {
                     const scriptMatches = cleanHtml.match(/<script[^>]*>([\s\S]*?)<\/script>/gi) || [];
                     scriptMatches.forEach(scriptTag => {
@@ -269,7 +314,6 @@
                     log('JSON 节点捕获提示: ' + e.message, 'warn');
                 }
 
-                // 策略 2: CDN 全域流量扫瞄 (针对多图 Carousel)
                 if (foundItems.length <= 1) {
                     log('进入 CDN 流量密集捕获引擎...', 'info');
                     const allUrls = cleanHtml.match(/https?:\/\/[^"'\s<>&]+/gi) || [];
@@ -284,28 +328,24 @@
                     });
                 }
 
-                // 过滤低清头像与占位图 (150x150, 320x320 等)
-                let filteredList = [];
-                foundItems.forEach(item => {
-                    const u = item.url;
-                    if (!u.includes('150x150') && 
-                        !u.includes('s150x150') && 
-                        !u.includes('p150x150') && 
-                        !u.includes('s320x320') && 
-                        !u.includes('profile_pic')) {
-                        filteredList.push(item);
-                    }
+                log('开始深解析与全量媒体去重...', 'info');
+                
+                const processedItems = foundItems.map(item => {
+                    const cleanUrl = item.url.split('?')[0];
+                    return { type: item.type, url: item.url, cleanUrl: cleanUrl };
                 });
 
-                // 基于图片唯一 Hash/文件标识精准去重
+                log('执行高精度内容清理 (移除作者头像/徽标/小图)...');
+                let filteredList = processedItems.filter(item => !isWasteImage(item.url));
+                
                 const dedupeMap = new Map();
                 filteredList.forEach(item => {
-                    let key = item.url.split('?')[0];
-                    const filenameMatch = key.match(/\/([^\/]+\.(?:jpg|jpeg|png|mp4))/i);
+                    let key = item.cleanUrl;
+                    const filenameMatch = key.match(/\/([^\/]+\.(?:jpg|jpeg|png|mp4|webp))/i);
                     if (filenameMatch) key = filenameMatch[1];
 
                     if (!dedupeMap.has(key)) {
-                        dedupeMap.set(key, item);
+                        dedupeMap.set(key, { type: item.type, url: item.url });
                     }
                 });
 
@@ -342,7 +382,7 @@
             mediaList.forEach((item, idx) => {
                 const card = document.createElement('div');
                 card.className = 'glass-card rounded-xl overflow-hidden flex flex-col justify-between group hover:border-pink-500/50 transition duration-300';
-                
+
                 const ext = item.type === 'video' ? 'mp4' : 'jpg';
                 const filename = `Ins_${shortcode}_P${idx + 1}.${ext}`;
 
@@ -413,10 +453,10 @@
             try {
                 btn.disabled = true;
                 btn.innerHTML = `<i class="fa-solid fa-spinner animate-spin"></i> 下载中...`;
-                
+
                 const blob = await fetchBlobViaProxy(url);
                 saveAs(blob, filename);
-                
+
                 btn.innerHTML = `<i class="fa-solid fa-check text-emerald-400"></i> 已完成`;
                 setTimeout(() => {
                     btn.innerHTML = origText;
@@ -429,45 +469,35 @@
             }
         }
 
-        async function downloadAllZip() {
+        // 修改后的一键批量直接下载功能（无需打包ZIP，逐个触发浏览器下载）
+        async function downloadAllBatch() {
             if (extractedMediaList.length === 0) return;
 
-            log('正在打包全量组图，转换为 ZIP 压缩包...', 'info');
-            setStatus('正在打包 ZIP...', 'loading');
+            log('正在准备批量下载全部文件...', 'info');
+            setStatus('批量下载中...', 'loading');
 
-            const zip = new JSZip();
-            const folder = zip.folder("Instagram_Batch_Media");
-
-            let count = 0;
+            let successCount = 0;
             const total = extractedMediaList.length;
 
             for (let i = 0; i < total; i++) {
                 const item = extractedMediaList[i];
                 const ext = item.type === 'video' ? 'mp4' : 'jpg';
-                const filename = `Media_P${i + 1}.${ext}`;
+                const filename = `Ins_Media_P${i + 1}.${ext}`;
 
                 try {
-                    log(`正在下载并存入 ZIP [${i + 1}/${total}]: ${filename}...`);
+                    log(`正在触发下载 [${i + 1}/${total}]: ${filename}...`);
                     const blob = await fetchBlobViaProxy(item.url);
-                    folder.file(filename, blob);
-                    count++;
+                    saveAs(blob, filename);
+                    successCount++;
+                    // 稍微延时以防止浏览器同时唤起大量下载被拦截
+                    await new Promise(r => setTimeout(r, 400));
                 } catch (e) {
-                    log(`文件 ${filename} 获取超时，已自动跳过`, 'warn');
+                    log(`文件 ${filename} 下载失败`, 'warn');
                 }
             }
 
-            if (count === 0) {
-                alert('打包失败，未能成功提取媒体数据');
-                setStatus('打包失败', 'error');
-                return;
-            }
-
-            log('压缩包生成中...', 'info');
-            const zipContent = await zip.generateAsync({ type: "blob" });
-            saveAs(zipContent, `Ins_Carousel_${Date.now()}.zip`);
-
-            log(`🎉 ZIP 打包完毕！共包含 ${count} 个文件`, 'success');
-            setStatus('ZIP 下载完成', 'success');
+            log(`🎉 批量下载任务完成！成功触发 ${successCount}/${total} 个文件`, 'success');
+            setStatus(`批量下载完成 (${successCount}/${total})`, 'success');
         }
     </script>
 </body>
