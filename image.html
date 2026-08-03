@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Instagram 组图/视频 网页版全自动提取器</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- JSZip & FileSaver -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <style>
+        body {
+            background-color: #0f172a;
+            color: #f8fafc;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+        .instagram-gradient {
+            background: linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%);
+        }
+        .instagram-text-gradient {
+            background: linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .glass-card {
+            background: rgba(30, 41, 59, 0.75);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+    </style>
+</head>
+<body class="min-h-screen py-8 px-4 sm:px-6 lg:px-8">
+    <div class="max-w-4xl mx-auto space-y-6">
+        
+        <!-- Header -->
+        <div class="text-center space-y-2">
+            <div class="inline-flex items-center justify-center w-14 h-14 rounded-2xl instagram-gradient shadow-lg shadow-pink-500/20 mb-1">
+                <i class="fa-brands fa-instagram text-3xl text-white"></i>
+            </div>
+            <h1 class="text-2xl sm:text-3xl font-extrabold tracking-tight">
+                Instagram <span class="instagram-text-gradient">完整组图 & 视频提取下载器</span>
+            </h1>
+            <p class="text-slate-400 max-w-lg mx-auto text-xs sm:text-sm">
+                彻底修复多图 Carousel 仅抓取第一张的问题。采用多路数据深解析，全量提取所有原图与视频。
+            </p>
+        </div>
+
+        <!-- Input Card -->
+        <div class="glass-card rounded-2xl p-5 shadow-xl space-y-4">
+            <div class="space-y-2">
+                <label for="ins-url" class="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                    <i class="fa-solid fa-link text-pink-500 mr-1.5"></i> 输入 Instagram 帖子 / Reel 链接
+                </label>
+                <div class="flex flex-col sm:flex-row gap-2.5">
+                    <input 
+                        type="url" 
+                        id="ins-url" 
+                        placeholder="例如: https://www.instagram.com/p/CXXXXXXXXXX/" 
+                        onkeydown="if(event.key==='Enter') startExtraction()"
+                        class="flex-1 bg-slate-900/90 border border-slate-700 rounded-xl px-4 py-3 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent text-sm transition"
+                    >
+                    <button 
+                        id="fetch-btn" 
+                        onclick="startExtraction()"
+                        class="instagram-gradient hover:opacity-95 active:scale-95 text-white font-bold px-6 py-3 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 text-sm whitespace-nowrap cursor-pointer"
+                    >
+                        <i class="fa-solid fa-bolt"></i> 解析完整组图
+                    </button>
+                </div>
+            </div>
+
+            <!-- Proxy Routing & Status Bar -->
+            <div class="pt-2 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-400">
+                <div class="flex items-center gap-2">
+                    <i class="fa-solid fa-network-wired text-emerald-400"></i>
+                    <span>跨域代理路线:</span>
+                    <select id="proxy-select" class="bg-slate-800 border border-slate-700 text-slate-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-pink-500">
+                        <option value="auto">⚡ 智能自动多通道 (推荐)</option>
+                        <option value="allorigins">AllOrigins API</option>
+                        <option value="corsproxy">CorsProxy.io</option>
+                        <option value="codetabs">CodeTabs Engine</option>
+                    </select>
+                </div>
+                <div id="status-badge" class="hidden items-center gap-2 px-3 py-1 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
+                    <span id="status-spinner" class="inline-block w-2 h-2 rounded-full bg-yellow-400 animate-ping"></span>
+                    <span id="status-text">准备就绪</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Terminal Output Log -->
+        <div id="log-card" class="hidden glass-card rounded-2xl p-4 text-xs font-mono space-y-1 text-slate-300 max-h-44 overflow-y-auto border border-slate-800 shadow-inner">
+            <!-- Dynamic Logs -->
+        </div>
+
+        <!-- Summary & Batch Control Bar -->
+        <div id="action-bar" class="hidden glass-card rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4 border-l-4 border-pink-500">
+            <div>
+                <h3 class="font-bold text-slate-100 flex items-center gap-2 text-base">
+                    <i class="fa-solid fa-circle-check text-emerald-400"></i> 解析完成
+                </h3>
+                <p id="media-count-info" class="text-xs text-slate-400">成功提取全量组图资源</p>
+            </div>
+            <div class="flex items-center gap-3 w-full sm:w-auto">
+                <button 
+                    onclick="downloadAllZip()" 
+                    class="flex-1 sm:flex-initial bg-pink-600 hover:bg-pink-700 text-white text-xs font-bold px-5 py-2.5 rounded-xl transition shadow flex items-center justify-center gap-2 cursor-pointer"
+                >
+                    <i class="fa-solid fa-file-zipper"></i> 一键打包下载 ZIP 组图
+                </button>
+            </div>
+        </div>
+
+        <!-- Media Grid -->
+        <div id="gallery-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+            <!-- Injected Media Cards -->
+        </div>
+
+    </div>
+
+    <!-- Extraction Core Logic -->
+    <script>
+        let extractedMediaList = [];
+
+        function log(msg, type = 'info') {
+            const logCard = document.getElementById('log-card');
+            if (!logCard) return;
+            logCard.classList.remove('hidden');
+            const time = new Date().toLocaleTimeString();
+            let color = 'text-slate-300';
+            if (type === 'success') color = 'text-emerald-400';
+            if (type === 'warn') color = 'text-yellow-400';
+            if (type === 'error') color = 'text-red-400';
+            
+            const line = document.createElement('div');
+            line.className = color;
+            line.innerText = `[${time}] ${msg}`;
+            logCard.appendChild(line);
+            logCard.scrollTop = logCard.scrollHeight;
+        }
+
+        function setStatus(text, state = 'loading') {
+            const badge = document.getElementById('status-badge');
+            const spinner = document.getElementById('status-spinner');
+            const statusText = document.getElementById('status-text');
+            if (!badge || !spinner || !statusText) return;
+            
+            badge.classList.remove('hidden');
+            badge.classList.add('flex');
+            statusText.innerText = text;
+
+            if (state === 'loading') {
+                spinner.className = "inline-block w-2 h-2 rounded-full bg-yellow-400 animate-ping";
+            } else if (state === 'success') {
+                spinner.className = "inline-block w-2 h-2 rounded-full bg-emerald-400";
+            } else {
+                spinner.className = "inline-block w-2 h-2 rounded-full bg-red-400";
+            }
+        }
+
+        function extractShortcode(urlStr) {
+            try {
+                const url = new URL(urlStr.trim());
+                const pathSegments = url.pathname.split('/').filter(Boolean);
+                const pIndex = pathSegments.findIndex(seg => seg === 'p' || seg === 'reel' || seg === 'reels');
+                if (pIndex !== -1 && pathSegments[pIndex + 1]) {
+                    return pathSegments[pIndex + 1];
+                }
+                if (pathSegments.length > 0) return pathSegments[0];
+            } catch (e) {
+                log('URL 格式无效，请输入正确的 Instagram 链接', 'error');
+            }
+            return null;
+        }
+
+        // 安全的反转义与清理函数，防止正则字符转义错误
+        function sanitizeText(raw) {
+            if (!raw) return '';
+            return raw.split('\\/').join('/')
+                      .split('\\').join('')
+                      .split('&amp;').join('&')
+                      .replace(/\\u0026/g, '&');
+        }
+
+        async function fetchWithProxy(targetUrl, preferredProxy = 'auto') {
+            const proxyGenerators = [];
+            
+            if (preferredProxy === 'allorigins' || preferredProxy === 'auto') {
+                proxyGenerators.push(url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`);
+            }
+            if (preferredProxy === 'corsproxy' || preferredProxy === 'auto') {
+                proxyGenerators.push(url => `https://corsproxy.io/?${encodeURIComponent(url)}`);
+            }
+            if (preferredProxy === 'codetabs' || preferredProxy === 'auto') {
+                proxyGenerators.push(url => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`);
+            }
+
+            for (let i = 0; i < proxyGenerators.length; i++) {
+                const proxyUrl = proxyGenerators[i](targetUrl);
+                try {
+                    log(`尝试代理线路 [${i + 1}/${proxyGenerators.length}]...`);
+                    const res = await fetch(proxyUrl);
+                    if (res.ok) {
+                        const text = await res.text();
+                        if (text && text.length > 200) {
+                            log(`代理线路 [${i + 1}] 连接成功!`, 'success');
+                            return text;
+                        }
+                    }
+                } catch (err) {
+                    log(`线路 [${i + 1}] 连接超时，切换备用线路...`, 'warn');
+                }
+            }
+            throw new Error('所有跨域代理通道均请求失败，请检查网络设置。');
+        }
+
+        async function startExtraction() {
+            const input = document.getElementById('ins-url').value.trim();
+            const proxyChoice = document.getElementById('proxy-select').value;
+            const gallery = document.getElementById('gallery-grid');
+            const actionBar = document.getElementById('action-bar');
+            const logCard = document.getElementById('log-card');
+
+            gallery.innerHTML = '';
+            logCard.innerHTML = '';
+            actionBar.classList.add('hidden');
+            extractedMediaList = [];
+
+            if (!input) {
+                alert('请输入 Instagram 帖子或 Reel 链接');
+                return;
+            }
+
+            const shortcode = extractShortcode(input);
+            if (!shortcode) {
+                alert('无法识别帖子 ID，请核对输入的链接格式。');
+                return;
+            }
+
+            setStatus(`深度解析 [${shortcode}]...`, 'loading');
+            log(`开始提取帖子 ID: ${shortcode}`);
+
+            const embedUrl = `https://www.instagram.com/p/${shortcode}/embed/captioned/`;
+            log(`定位数据源地址: ${embedUrl}`);
+
+            try {
+                const rawHtml = await fetchWithProxy(embedUrl, proxyChoice);
+                log('已成功获取 HTML 响应，正在解析全量组图资源...');
+
+                const cleanHtml = sanitizeText(rawHtml);
+                let foundItems = [];
+
+                // 策略 1: 扫瞄 JSON 标签中的图片与视频 URL 列表
+                try {
+                    const scriptMatches = cleanHtml.match(/<script[^>]*>([\s\S]*?)<\/script>/gi) || [];
+                    scriptMatches.forEach(scriptTag => {
+                        if (scriptTag.includes('display_url') || scriptTag.includes('shortcode_media') || scriptTag.includes('video_url')) {
+                            const displayUrls = scriptTag.match(/https?:\/\/[^"'\s<>]+\.(?:jpg|jpeg|png|heic|webp)[^"'\s<>]*/gi) || [];
+                            displayUrls.forEach(u => foundItems.push({ type: 'image', url: u }));
+
+                            const videoUrls = scriptTag.match(/https?:\/\/[^"'\s<>]+\.mp4[^"'\s<>]*/gi) || [];
+                            videoUrls.forEach(u => foundItems.push({ type: 'video', url: u }));
+                        }
+                    });
+                } catch (e) {
+                    log('JSON 节点捕获提示: ' + e.message, 'warn');
+                }
+
+                // 策略 2: CDN 全域流量扫瞄 (针对多图 Carousel)
+                if (foundItems.length <= 1) {
+                    log('进入 CDN 流量密集捕获引擎...', 'info');
+                    const allUrls = cleanHtml.match(/https?:\/\/[^"'\s<>&]+/gi) || [];
+                    allUrls.forEach(u => {
+                        if (u.includes('cdninstagram.com') || u.includes('fbcdn.net')) {
+                            if (u.includes('.mp4')) {
+                                foundItems.push({ type: 'video', url: u });
+                            } else if (u.includes('.jpg') || u.includes('.png') || u.includes('_nc_cat')) {
+                                foundItems.push({ type: 'image', url: u });
+                            }
+                        }
+                    });
+                }
+
+                // 过滤低清头像与占位图 (150x150, 320x320 等)
+                let filteredList = [];
+                foundItems.forEach(item => {
+                    const u = item.url;
+                    if (!u.includes('150x150') && 
+                        !u.includes('s150x150') && 
+                        !u.includes('p150x150') && 
+                        !u.includes('s320x320') && 
+                        !u.includes('profile_pic')) {
+                        filteredList.push(item);
+                    }
+                });
+
+                // 基于图片唯一 Hash/文件标识精准去重
+                const dedupeMap = new Map();
+                filteredList.forEach(item => {
+                    let key = item.url.split('?')[0];
+                    const filenameMatch = key.match(/\/([^\/]+\.(?:jpg|jpeg|png|mp4))/i);
+                    if (filenameMatch) key = filenameMatch[1];
+
+                    if (!dedupeMap.has(key)) {
+                        dedupeMap.set(key, item);
+                    }
+                });
+
+                extractedMediaList = Array.from(dedupeMap.values());
+
+                if (extractedMediaList.length === 0) {
+                    log('未匹配到公开媒体资源。该帖可能属于私密账号或被删除。', 'error');
+                    setStatus('解析失败', 'error');
+                    alert('未解析到公开媒体资源，请确认该账号或帖子是否处于公开状态。');
+                    return;
+                }
+
+                log(`🎉 成功解析并抓取到 ${extractedMediaList.length} 个高清媒体资源！`, 'success');
+                setStatus(`提取成功 (${extractedMediaList.length} 项)`, 'success');
+
+                renderGallery(extractedMediaList, shortcode);
+
+            } catch (err) {
+                log(`提取过程发生异常: ${err.message}`, 'error');
+                setStatus('解析异常', 'error');
+                alert(`请求异常: ${err.message}`);
+            }
+        }
+
+        function renderGallery(mediaList, shortcode) {
+            const gallery = document.getElementById('gallery-grid');
+            const actionBar = document.getElementById('action-bar');
+            const countInfo = document.getElementById('media-count-info');
+
+            gallery.innerHTML = '';
+            actionBar.classList.remove('hidden');
+            countInfo.innerText = `已成功解析完整组图！共找到 ${mediaList.length} 项媒体 (帖子 ID: ${shortcode})`;
+
+            mediaList.forEach((item, idx) => {
+                const card = document.createElement('div');
+                card.className = 'glass-card rounded-xl overflow-hidden flex flex-col justify-between group hover:border-pink-500/50 transition duration-300';
+                
+                const ext = item.type === 'video' ? 'mp4' : 'jpg';
+                const filename = `Ins_${shortcode}_P${idx + 1}.${ext}`;
+
+                let mediaPreviewHtml = '';
+                if (item.type === 'video') {
+                    mediaPreviewHtml = `
+                        <div class="relative bg-black flex items-center justify-center aspect-square overflow-hidden">
+                            <video src="${item.url}" controls class="w-full h-full object-cover"></video>
+                            <span class="absolute top-2 left-2 bg-pink-600/90 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow">
+                                <i class="fa-solid fa-video mr-1"></i>视频 #${idx + 1}
+                            </span>
+                        </div>
+                    `;
+                } else {
+                    mediaPreviewHtml = `
+                        <div class="relative bg-slate-900 aspect-square overflow-hidden">
+                            <img src="${item.url}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition duration-500" alt="Media P${idx + 1}" />
+                            <span class="absolute top-2 left-2 bg-slate-800/90 text-slate-200 text-[10px] font-bold px-2 py-0.5 rounded-full border border-slate-700 shadow">
+                                <i class="fa-solid fa-image mr-1"></i>图 #${idx + 1}
+                            </span>
+                        </div>
+                    `;
+                }
+
+                card.innerHTML = `
+                    ${mediaPreviewHtml}
+                    <div class="p-3 space-y-2 bg-slate-900/60">
+                        <div class="text-[11px] font-mono text-slate-400 truncate" title="${filename}">${filename}</div>
+                        <div class="flex items-center gap-2">
+                            <button 
+                                onclick="downloadSingle('${item.url}', '${filename}', this)"
+                                class="flex-1 bg-slate-800 hover:bg-pink-600 hover:text-white border border-slate-700 text-slate-200 text-xs py-2 rounded-lg transition flex items-center justify-center gap-1.5 font-medium cursor-pointer"
+                            >
+                                <i class="fa-solid fa-download"></i> 下载此文件
+                            </button>
+                            <a href="${item.url}" target="_blank" rel="noopener noreferrer" class="bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 p-2 rounded-lg transition" title="新标签页打开直链">
+                                <i class="fa-solid fa-arrow-up-right-from-square text-xs"></i>
+                            </a>
+                        </div>
+                    </div>
+                `;
+                gallery.appendChild(card);
+            });
+        }
+
+        async function fetchBlobViaProxy(url) {
+            try {
+                const directRes = await fetch(url);
+                if (directRes.ok) return await directRes.blob();
+            } catch (e) {}
+
+            const proxies = [
+                u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+                u => `https://corsproxy.io/?${encodeURIComponent(u)}`
+            ];
+
+            for (let p of proxies) {
+                try {
+                    const res = await fetch(p(url));
+                    if (res.ok) return await res.blob();
+                } catch(e) {}
+            }
+            throw new Error('下载数据超时');
+        }
+
+        async function downloadSingle(url, filename, btn) {
+            const origText = btn.innerHTML;
+            try {
+                btn.disabled = true;
+                btn.innerHTML = `<i class="fa-solid fa-spinner animate-spin"></i> 下载中...`;
+                
+                const blob = await fetchBlobViaProxy(url);
+                saveAs(blob, filename);
+                
+                btn.innerHTML = `<i class="fa-solid fa-check text-emerald-400"></i> 已完成`;
+                setTimeout(() => {
+                    btn.innerHTML = origText;
+                    btn.disabled = false;
+                }, 2000);
+            } catch (err) {
+                alert(`下载失败: ${err.message}`);
+                btn.innerHTML = origText;
+                btn.disabled = false;
+            }
+        }
+
+        async function downloadAllZip() {
+            if (extractedMediaList.length === 0) return;
+
+            log('正在打包全量组图，转换为 ZIP 压缩包...', 'info');
+            setStatus('正在打包 ZIP...', 'loading');
+
+            const zip = new JSZip();
+            const folder = zip.folder("Instagram_Batch_Media");
+
+            let count = 0;
+            const total = extractedMediaList.length;
+
+            for (let i = 0; i < total; i++) {
+                const item = extractedMediaList[i];
+                const ext = item.type === 'video' ? 'mp4' : 'jpg';
+                const filename = `Media_P${i + 1}.${ext}`;
+
+                try {
+                    log(`正在下载并存入 ZIP [${i + 1}/${total}]: ${filename}...`);
+                    const blob = await fetchBlobViaProxy(item.url);
+                    folder.file(filename, blob);
+                    count++;
+                } catch (e) {
+                    log(`文件 ${filename} 获取超时，已自动跳过`, 'warn');
+                }
+            }
+
+            if (count === 0) {
+                alert('打包失败，未能成功提取媒体数据');
+                setStatus('打包失败', 'error');
+                return;
+            }
+
+            log('压缩包生成中...', 'info');
+            const zipContent = await zip.generateAsync({ type: "blob" });
+            saveAs(zipContent, `Ins_Carousel_${Date.now()}.zip`);
+
+            log(`🎉 ZIP 打包完毕！共包含 ${count} 个文件`, 'success');
+            setStatus('ZIP 下载完成', 'success');
+        }
+    </script>
+</body>
+</html>
